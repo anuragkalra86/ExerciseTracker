@@ -10,6 +10,8 @@ import sys
 import time
 import logging
 import signal
+import argparse
+import glob
 from pathlib import Path
 from datetime import datetime
 from configparser import ConfigParser
@@ -322,14 +324,72 @@ class S3UploaderService:
         self.logger.info(f"Received signal {signum}, shutting down...")
         self.stop()
     
-    def start(self):
-        """Start the S3 uploader service"""
+    def upload_existing_files(self):
+        """Upload all existing files in the video directory"""
         video_dir = self.config.get_video_directory()
         
         if not os.path.exists(video_dir):
             raise FileNotFoundError(f"Video directory not found: {video_dir}")
         
-        self.logger.info(f"Starting S3 Uploader Service")
+        self.logger.info(f"Starting bulk upload of existing files in: {video_dir}")
+        
+        # Get all video files in the directory
+        video_files = []
+        for extension in self.config.get_file_extensions():
+            pattern = os.path.join(video_dir, f"*{extension}")
+            video_files.extend(glob.glob(pattern))
+        
+        if not video_files:
+            self.logger.info("No existing video files found to upload")
+            return True
+        
+        self.logger.info(f"Found {len(video_files)} existing video files to upload")
+        
+        # Upload each file
+        success_count = 0
+        failure_count = 0
+        
+        for file_path in video_files:
+            try:
+                self.logger.info(f"Processing existing file: {file_path}")
+                
+                # Upload file
+                if self.uploader.upload_file(file_path):
+                    # Delete local file after successful upload
+                    try:
+                        os.remove(file_path)
+                        self.logger.info(f"Successfully deleted local file: {file_path}")
+                        success_count += 1
+                    except OSError as e:
+                        self.logger.error(f"Failed to delete local file {file_path}: {e}")
+                        # Still count as success since upload worked
+                        success_count += 1
+                else:
+                    self.logger.error(f"Failed to upload {file_path}")
+                    failure_count += 1
+                    
+            except Exception as e:
+                self.logger.error(f"Error processing {file_path}: {e}")
+                failure_count += 1
+        
+        # Log summary
+        self.logger.info(f"Bulk upload completed: {success_count} successful, {failure_count} failed")
+        
+        return failure_count == 0
+    
+    def start(self):
+        """Start the S3 uploader service"""
+        # For backward compatibility, just call start_watching
+        self.start_watching()
+    
+    def start_watching(self):
+        """Start file system watching mode"""
+        video_dir = self.config.get_video_directory()
+        
+        if not os.path.exists(video_dir):
+            raise FileNotFoundError(f"Video directory not found: {video_dir}")
+        
+        self.logger.info(f"Starting file system watching mode")
         self.logger.info(f"Monitoring directory: {video_dir}")
         self.logger.info(f"S3 Bucket: {self.config.get_s3_bucket()}")
         self.logger.info(f"File extensions: {self.config.get_file_extensions()}")
@@ -365,20 +425,79 @@ class S3UploaderService:
 
 def main():
     """Main entry point"""
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(
+        description="S3 Uploader Service - Upload MP4 files to S3 bucket",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python3 s3_uploader.py                              # Start watching for new files
+  python3 s3_uploader.py --upload-existing           # Upload existing files only
+  python3 s3_uploader.py --upload-existing --continue-watching  # Upload existing files then watch for new ones
+        """
+    )
+    
+    parser.add_argument(
+        '--upload-existing',
+        action='store_true',
+        help='Upload all existing files in the video directory before starting normal operation'
+    )
+    
+    parser.add_argument(
+        '--continue-watching',
+        action='store_true',
+        help='Continue watching for new files after uploading existing files (only used with --upload-existing)'
+    )
+    
+    parser.add_argument(
+        '--config',
+        default='s3_uploader_config.ini',
+        help='Configuration file path (default: s3_uploader_config.ini)'
+    )
+    
+    args = parser.parse_args()
+    
+    # Validate arguments
+    if args.continue_watching and not args.upload_existing:
+        print("Error: --continue-watching can only be used with --upload-existing")
+        sys.exit(1)
+    
     try:
         # Check if config file exists
-        config_file = 's3_uploader_config.ini'
-        if not os.path.exists(config_file):
-            print(f"Configuration file not found: {config_file}")
+        if not os.path.exists(args.config):
+            print(f"Configuration file not found: {args.config}")
             print("Please create the configuration file before starting the service.")
             sys.exit(1)
         
-        # Create and start service
-        service = S3UploaderService(config_file)
-        service.start()
+        # Create service
+        service = S3UploaderService(args.config)
         
+        # Handle different modes
+        if args.upload_existing:
+            print("Starting bulk upload of existing files...")
+            success = service.upload_existing_files()
+            
+            if success:
+                print("Bulk upload completed successfully!")
+            else:
+                print("Bulk upload completed with some failures. Check logs for details.")
+                
+                # If there were failures and we're not continuing to watch, exit with error
+                if not args.continue_watching:
+                    sys.exit(1)
+            
+            if args.continue_watching:
+                print("Starting file system watching mode...")
+                service.start_watching()
+        else:
+            # Default mode: just start watching
+            service.start_watching()
+            
     except KeyboardInterrupt:
         print("\nService interrupted by user")
+    except FileNotFoundError as e:
+        print(f"Configuration error: {e}")
+        sys.exit(1)
     except Exception as e:
         print(f"Service failed to start: {e}")
         sys.exit(1)

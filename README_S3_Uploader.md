@@ -5,6 +5,7 @@ An automated service that monitors a local directory for MP4 files and uploads t
 ## Features
 
 - **File System Watcher**: Monitors directory for new MP4 files in real-time
+- **Bulk Upload**: Upload all existing files in directory with `--upload-existing` flag
 - **Automatic Upload**: Uploads files to S3 with retry logic and exponential backoff
 - **Safety Checks**: Verifies upload success before deleting local files
 - **Configurable**: All settings managed through configuration file
@@ -81,6 +82,21 @@ source venv/bin/activate
 python3 s3_uploader.py
 ```
 
+### Upload Existing Files
+
+If you need to upload files that were created before the service started, use the `--upload-existing` flag:
+
+```bash
+# Activate virtual environment first
+source venv/bin/activate
+
+# Upload all existing MP4 files in the video directory
+python3 s3_uploader.py --upload-existing
+
+# Upload existing files and then continue watching for new files
+python3 s3_uploader.py --upload-existing --continue-watching
+```
+
 ### Run as Background Service
 
 ```bash
@@ -120,11 +136,20 @@ kill -TERM <process_id>
 
 ## How It Works
 
+### Normal File Watching Mode (Default)
 1. **File Detection**: Service monitors the configured directory for new MP4 files
 2. **File Readiness**: Waits for file to be stable (no modifications for threshold time)
 3. **Upload**: Uploads file to S3 with retry logic if failures occur
 4. **Verification**: Verifies upload by checking file size matches
 5. **Cleanup**: Deletes local file only after successful upload verification
+
+### Bulk Upload Mode (`--upload-existing`)
+1. **Directory Scan**: Scans the video directory for all existing MP4 files
+2. **Batch Processing**: Processes each file in the directory sequentially
+3. **Upload**: Uploads each file to S3 with retry logic if failures occur
+4. **Verification**: Verifies upload by checking file size matches
+5. **Cleanup**: Deletes local file only after successful upload verification
+6. **Continue Watching**: Optionally continues with normal file watching mode if `--continue-watching` is specified
 
 ## Logging
 
@@ -161,6 +186,20 @@ This service is designed to work alongside the `motion_record.py` script:
 3. Local files are cleaned up after successful upload
 4. Both services run independently without blocking each other
 
+### Handling Existing Files
+
+If you start `motion_record.py` before starting the S3 uploader service, files will accumulate in the video directory. To upload these existing files:
+
+```bash
+# Upload all existing files and then continue watching for new ones
+python3 s3_uploader.py --upload-existing --continue-watching
+```
+
+This is particularly useful when:
+- The motion recorder was running but the S3 uploader wasn't
+- You want to migrate existing video files to S3
+- You're setting up the system for the first time
+
 ## Troubleshooting
 
 ### Service Won't Start
@@ -178,6 +217,12 @@ This service is designed to work alongside the `motion_record.py` script:
 ### High CPU Usage
 - Increase `file_age_threshold` if files are being processed too quickly
 - Check if video directory has excessive file creation activity
+
+### Bulk Upload Issues
+- If bulk upload fails for some files, check individual file permissions
+- Large numbers of files may take significant time to process
+- Use `--continue-watching` flag to start monitoring after bulk upload completes
+- Check available disk space and S3 bucket storage limits
 
 ## Systemd Service (Optional)
 
