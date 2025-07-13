@@ -23,7 +23,7 @@ def detect_motion(prev_frame, curr_frame, min_area=5000):
     frame_delta = cv2.absdiff(prev_blur, curr_blur)
     thresh = cv2.threshold(frame_delta, 25, 255, cv2.THRESH_BINARY)[1]
     # Dilate the thresholded image to fill in holes
-    thresh = cv2.dilate(thresh, None, iterations=2)
+    thresh = cv2.dilate(thresh, np.ones((5, 5), np.uint8), iterations=2)
     # Find contours
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     for contour in contours:
@@ -34,7 +34,7 @@ def detect_motion(prev_frame, curr_frame, min_area=5000):
 def record_clip(cap, fps, frame_size, show_preview=False):
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     filename = os.path.join(CLIP_DIR, f'clip_{timestamp}.mp4')
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    fourcc = cv2.VideoWriter.fourcc(*'mp4v')
     out = cv2.VideoWriter(filename, fourcc, fps, frame_size)
     print(f'Recording started: {filename}')
     start_time = time.time()

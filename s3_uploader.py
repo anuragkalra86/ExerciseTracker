@@ -103,7 +103,7 @@ class S3Uploader:
             self.logger.error(f"Failed to connect to S3: {e}")
             raise
     
-    def upload_file(self, local_path: str, s3_key: str = None) -> bool:
+    def upload_file(self, local_path: str, s3_key: str | None = None) -> bool:
         """Upload file to S3 with retry logic"""
         if s3_key is None:
             s3_key = os.path.basename(local_path)
@@ -193,7 +193,7 @@ class VideoFileHandler(FileSystemEventHandler):
         if event.is_directory:
             return
         
-        file_path = event.src_path
+        file_path = str(event.src_path)
         
         # Check if it's a video file
         if not self.is_video_file(file_path):
@@ -272,7 +272,7 @@ class S3UploaderService:
         self.uploader = S3Uploader(self.config)
         self.observer = Observer()
         self.event_handler = VideoFileHandler(self.uploader, self.config)
-        self.logger = None
+        self.logger = logging.getLogger(__name__)
         self.running = False
         
         self.setup_logging()
